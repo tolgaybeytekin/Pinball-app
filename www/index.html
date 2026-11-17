@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pre-Entry Street Empty Parking Predictor</title>
+<style>
+:root{--bg:#070b18;--card:#0f172a;--text:#e6eaf2;--muted:#9aa4b2;--neon:#00ff9d;--red:#ff4d4d;--blue:#00e5ff;--border:#1f2937;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);overflow:hidden;}
+.app{display:grid;grid-template-rows:auto 1fr auto; height:100vh; gap:8px; padding:8px;}
+.top{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
+label{font-size:12px;color:var(--muted);}
+select,button,input[type=range]{background:#0b1220;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;min-height:32px;}
+button{cursor:pointer;}
+button.active{border-color:var(--neon);color:var(--neon);}
+.langbtn{padding:4px 8px;font-size:12px;}
+.main{display:grid;grid-template-columns:2fr 1fr;gap:8px;min-height:0;}
+@media(max-width:900px){.main{grid-template-columns:1fr;}}
+.canvas-wrap{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px;min-height:0;position:relative;}
+canvas{width:100%;height:100%;display:block;}
+.statusbar{position:absolute;top:10px;left:10px;padding:8px 12px;border-radius:8px;border:1px solid var(--neon);background:rgba(0,0,0,.7);font-weight:700;}
+.statusbar.full{border-color:var(--red);color:var(--red);}
+.side{display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.slotcard{padding:8px;border-radius:8px;border:1px solid var(--border);background:#0b1220;}
+.slotcard.empty{border-color:var(--neon);}
+.slotcard.occupied{border-color:var(--red);}
+.status{font-weight:700;}
+.empty{color:var(--neon);}
+.occupied{color:var(--red);}
+.log{height:100px;overflow:auto;font-size:12px;font-family:monospace;background:#000;padding:6px;border-radius:6px;}
+.bottom{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between;}
+.chanbtn{padding:4px 8px;font-size:12px;}
+#ad-banner-slot{width:100%;max-height:90px;overflow:hidden;border:1px dashed var(--border);border-radius:8px;padding:6px;text-align:center;color:var(--muted);font-size:12px;}
+#ad-banner-slot.closed{display:none;}
+.heatmap{height:18px;border-radius:6px;overflow:hidden;display:flex;margin-top:6px;}
+.heatmap div{flex:1;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="controls">
+      <div>
+        <label data-i18n="freq">Frequency (MHz)</label>
+        <input type="range" id="freq" min="87.5" max="108" step="0.1" value="98.6" />
+        <span id="freqVal">98.6</span>
+      </div>
+      <div>
+        <label data-i18n="region">Region</label>
+        <select id="region">
+          <option value="global">Global/EU/TR/US</option>
+          <option value="japan">Japan Band</option>
+        </select>
+      </div>
+      <div>
+        <label data-i18n="channels">Presets</label>
+        <button class="chanbtn" data-f="92.4">92.4</button>
+        <button class="chanbtn" data-f="98.6">98.6</button>
+        <button class="chanbtn" data-f="104.2">104.2</button>
+      </div>
+      <div>
+        <label data-i18n="mode">Mode</label>
+        <select id="mode">
+          <option value="sim">Pre-Entry Simulation</option>
+          <option value="live">Live SDR/Mic</option>
+        </select>
+      </div>
+      <button id="audioBtn" data-i18n="audioBtn">Start Live Input</button>
+      <button id="autoBtn" data-i18n="autoBtn">Auto Traffic</button>
+      <button id="replayBtn" data-i18n="replayBtn">Replay Approach</button>
+      <button id="fillBtn" data-i18n="fillBtn">Fill/Clear All</button>
+      <button id="muteBtn" data-i18n="mute">Sound: On</button>
+    </div>
+    <div>
+      <button class="langbtn" data-lang="en">EN</button>
+      <button class="langbtn" data-lang="tr">TR</button>
+      <button class="langbtn" data-lang="es">ES</button>
+      <button class="langbtn" data-lang="de">DE</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="canvas-wrap">
+      <canvas id="radar"></canvas>
+      <div class="statusbar" id="statusbar">Street Status: -</div>
+    </div>
+    <div class="side">
+      <div class="card">
+        <h3 data-i18n="spectrum">Spectrum</h3>
+        <canvas id="spectrum" height="120"></canvas>
+        <div class="heatmap" id="heatmap"></div>
+      </div>
+      <div class="card">
+        <h3 data-i18n="cards">Telemetry</h3>
+        <div class="cards" id="slotCards"></div>
+      </div>
+      <div class="card">
+        <h3 data-i18n="logTitle">Event Log</h3>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+  <div class="bottom">
+    <span data-i18n="footer">Pre-Entry Street Empty Parking Predictor</span>
+    <div id="ad-banner-slot">
+      <span data-i18n="ad">Advertisement (ready)</span>
+      <button id="closeAd" style="float:right;">×</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const I18N = {
+  en: { freq:'Frequency (MHz)', region:'Region', channels:'Presets', mode:'Mode', audioBtn:'Start Live Input', autoBtn:'Auto Traffic', replayBtn:'Replay Approach', fillBtn:'Fill/Clear All', mute:'Sound: On', spectrum:'Spectrum', cards:'Telemetry', logTitle:'Event Log', footer:'Pre-Entry Street Empty Parking Predictor', ad:'Advertisement (ready)', empty:'EMPTY', occ:'OCCUPIED', enter:'Slot {n}: VEHICLE ENTERED', leave:'Slot {n}: VEHICLE LEFT', sig:'Signal', phase:'Phase', refl:'Reflection', streetOpen:'STREET STATUS: {n} EMPTY SPOTS (ENTER)', streetFull:'STREET FULL - SKIP', totalEmpty:'Empty spots' },
+  tr: { freq:'Frekans (MHz)', region:'Bölge', channels:'Ön Ayarlar', mode:'Mod', audioBtn:'Canlı Giriş Başlat', autoBtn:'Otomatik Trafik', replayBtn:'Yaklaşımı Tekrarla', fillBtn:'Tümünü Doldur/Boşalt', mute:'Ses: Açık', spectrum:'Spektrum', cards:'Telemetri', logTitle:'Olay Günlüğü', footer:'Sokağa Giriş Öncesi Boş Park Yeri Tahmin Sistemi', ad:'Reklam Alanı (hazır)', empty:'BOŞ', occ:'DOLU', enter:'Slot {n}: ARAÇ GİRİŞİ', leave:'Slot {n}: ARAÇ ÇIKIŞI', sig:'Sinyal', phase:'Faz', refl:'Yansıma', streetOpen:'SOKAK DURUMU: {n} BOŞ YER TESPİT EDİLDİ (SOKAĞA GİRİN)', streetFull:'SOKAK TAMAMEN DOLU - PAS GEÇİN', totalEmpty:'Boş yer' },
+  es: { freq:'Frecuencia (MHz)', region:'Región', channels:'Ajustes', mode:'Modo', audioBtn:'Iniciar', autoBtn:'Tráfico Auto', replayBtn:'Repetir', fillBtn:'Llenar/Vaciar', mute:'Sonido: On', spectrum:'Espectro', cards:'Telemetría', logTitle:'Registro', footer:'Predictor de plazas libres', ad:'Anuncio (listo)', empty:'LIBRE', occ:'OCUPADO', enter:'Slot {n}: ENTRADA', leave:'Slot {n}: SALIDA', sig:'Señal', phase:'Fase', refl:'Reflexión', streetOpen:'CALLE: {n} PLAZAS LIBRES (ENTRAR)', streetFull:'CALLE LLENA - PASAR', totalEmpty:'Plazas libres' },
+  de: { freq:'Frequenz (MHz)', region:'Region', channels:'Voreinstellungen', mode:'Modus', audioBtn:'Live starten', autoBtn:'Auto-Verkehr', replayBtn:'Annäherung wiederholen', fillBtn:'Füllen/Leeren', mute:'Ton: An', spectrum:'Spektrum', cards:'Telemetrie', logTitle:'Protokoll', footer:'Vorab-Erkennung freier Parkplätze', ad:'Werbung (bereit)', empty:'FREI', occ:'BELEGT', enter:'Slot {n}: EINFAHRT', leave:'Slot {n}: AUSFAHRT', sig:'Signal', phase:'Phase', refl:'Reflexion', streetOpen:'STRASSE: {n} FREIE PLÄTZE (EINFAHREN)', streetFull:'STRASSE VOLL - VORBEIFAHRN', totalEmpty:'Freie Plätze' }
+};
+let lang='en';
+function t(key){ return I18N[lang][key] || key; }
+function applyLang(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{ el.textContent=t(el.getAttribute('data-i18n')); });
+  document.documentElement.lang=lang;
+  document.getElementById('muteBtn').textContent = soundOn ? (lang==='tr'?'Ses: Açık':lang==='es'?'Sonido: On':lang==='de'?'Ton: An':'Sound: On') : (lang==='tr'?'Ses: Kapalı':lang==='es'?'Sonido: Off':lang==='de'?'Ton: Aus':'Sound: Off');
+  renderSlotCards(); updateStatusbar(); updateSummary();
+}
+document.querySelectorAll('.langbtn').forEach(b=> b.addEventListener('click',()=>{ lang=b.dataset.lang; applyLang(); }));
+
+let freq=98.6, mode='sim', soundOn=true, autoTraffic=false;
+let audioCtx=null, analyser=null, dataArray=null, source=null;
+
+// 6 slots along target street
+const slots=[];
+for(let i=0;i<6;i++) slots.push({id:i+1,occupied:false,signal:-40,phase:0,refl:5, x:0,y:0, side: i%2===0?'left':'right'});
+
+const radar=document.getElementById('radar');
+const rctx=radar.getContext('2d');
+const spec=document.getElementById('spectrum');
+const sctx=spec.getContext('2d');
+
+function resize(){
+  radar.width=radar.clientWidth*devicePixelRatio; radar.height=radar.clientHeight*devicePixelRatio;
+  spec.width=spec.clientWidth*devicePixelRatio; spec.height=spec.clientHeight*devicePixelRatio;
+  layout();
+}
+window.addEventListener('resize',resize);
+function layout(){
+  const W=radar.width,H=radar.height;
+  const streetX=W*0.5; const startY=H*0.25; const spacing=H*0.09;
+  for(let i=0;i<6;i++){
+    const side = i%2===0 ? -1 : 1;
+    const idx = Math.floor(i/2);
+    slots[i].x = streetX + side*40;
+    slots[i].y = startY + idx*spacing + (i%2)* (spacing/2);
+  }
+}
+resize();
+
+// car approach animation
+let carProgress=0; // 0..1 from left to intersection
+let carX=0, carY=0;
+function updateCar(){
+  const W=radar.width,H=radar.height;
+  const avenueY=H*0.82;
+  const targetX=W*0.5;
+  carX = 60 + carProgress*(targetX-60);
+  carY = avenueY;
+}
+
+let waves=[], lastWave=0;
+function beep(freq=880,dur=0.12){ if(!soundOn) return; if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)(); const o=audioCtx.createOscillator(); const g=audioCtx.createGain(); o.type='square'; o.frequency.value=freq; g.gain.setValueAtTime(0.12,audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime+dur); o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+dur); }
+
+function log(msg){ const el=document.getElementById('log'); const time=new Date().toLocaleTimeString(); el.innerHTML=`<div>[${time}] ${msg}</div>`+el.innerHTML; }
+
+function toggleSlot(i){
+  const s=slots[i];
+  s.occupied=!s.occupied;
+  if(s.occupied){ s.signal=-62-Math.random()*6; s.phase=110+Math.random()*40; s.refl=65+Math.random()*20; beep(660); log(t('enter').replace('{n}',i+1)); }
+  else { s.signal=-38-Math.random()*4; s.phase=Math.random()*10; s.refl=2+Math.random()*6; beep(440); log(t('leave').replace('{n}',i+1)); }
+  renderSlotCards(); updateSummary(); updateStatusbar(); updateHeatmap();
+}
+
+radar.addEventListener('click',(e)=>{
+  const rect=radar.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(radar.width/rect.width);
+  const y=(e.clientY-rect.top)*(radar.height/rect.height);
+  for(let i=0;i<6;i++){ const s=slots[i]; if(Math.hypot(x-s.x,y-s.y)<24) toggleSlot(i); }
+});
+
+function renderSlotCards(){
+  const el=document.getElementById('slotCards');
+  el.innerHTML='';
+  slots.forEach((s,i)=>{
+    const div=document.createElement('div');
+    div.className='slotcard '+(s.occupied?'occupied':'empty');
+    div.innerHTML=`<b>Slot ${i+1}</b><br>${t('sig')}: ${s.signal.toFixed(1)} dBFS<br>${t('phase')}: ${s.phase.toFixed(1)}°<br>${t('refl')}: ${s.refl.toFixed(0)}%<br><span class="status ${s.occupied?'occupied':'empty'}">${s.occupied?t('occ'):t('empty')}</span>`;
+    el.appendChild(div);
+  });
+}
+
+let autoTimer=null;
+document.getElementById('autoBtn').addEventListener('click',()=>{
+  autoTraffic=!autoTraffic;
+  document.getElementById('autoBtn').classList.toggle('active',autoTraffic);
+  if(autoTraffic){ autoTimer=setInterval(()=>{ toggleSlot(Math.floor(Math.random()*6)); },2200); }
+  else { clearInterval(autoTimer); autoTimer=null; }
+});
+
+document.getElementById('replayBtn').addEventListener('click',()=>{
+  carProgress=0;
+  log('Replay approach');
+});
+document.getElementById('fillBtn').addEventListener('click',()=>{
+  // toggle all
+  const allOcc = slots.every(s=>s.occupied);
+  slots.forEach((s,i)=>{ if(allOcc) { s.occupied=false; s.signal=-38; s.phase=0; s.refl=5; } else { s.occupied=true; s.signal=-62; s.phase=120; s.refl=70; } });
+  renderSlotCards(); updateSummary(); updateStatusbar(); updateHeatmap();
+});
+
+const freqSlider=document.getElementById('freq');
+freqSlider.addEventListener('input',()=>{ freq=parseFloat(freqSlider.value); document.getElementById('freqVal').textContent=freq.toFixed(1); });
+document.querySelectorAll('.chanbtn').forEach(b=> b.addEventListener('click',()=>{ freq=parseFloat(b.dataset.f); freqSlider.value=freq; document.getElementById('freqVal').textContent=freq.toFixed(1); }));
+document.getElementById('region').addEventListener('change',(e)=>{
+  const r=e.target.value;
+  if(r==='japan'){ freqSlider.min=76; freqSlider.max=95; if(freq>95) freq=95; }
+  else { freqSlider.min=87.5; freqSlider.max=108; if(freq<87.5) freq=87.5; }
+  freqSlider.value=freq; document.getElementById('freqVal').textContent=freq.toFixed(1);
+});
+document.getElementById('mode').addEventListener('change',(e)=>{ mode=e.target.value; });
+document.getElementById('audioBtn').addEventListener('click', async ()=>{
+  if(mode!=='live'){ alert('Set mode to Live first.'); return; }
+  try {
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    analyser=audioCtx.createAnalyser(); analyser.fftSize=2048;
+    dataArray=new Uint8Array(analyser.frequencyBinCount);
+    source=audioCtx.createMediaStreamSource(stream);
+    source.connect(analyser);
+    document.getElementById('audioBtn').textContent='Live Active';
+  } catch(err){ alert('Audio access failed: '+err.message); }
+});
+document.getElementById('muteBtn').addEventListener('click',()=>{ soundOn=!soundOn; document.getElementById('muteBtn').textContent=soundOn?(lang==='tr'?'Ses: Açık':lang==='es'?'Sonido: On':lang==='de'?'Ton: An':'Sound: On'):(lang==='tr'?'Ses: Kapalı':lang==='es'?'Sonido: Off':lang==='de'?'Ton: Aus':'Sound: Off'); });
+document.getElementById('closeAd').addEventListener('click',()=>{ document.getElementById('ad-banner-slot').classList.add('closed'); });
+
+function updateSummary(){
+  const empties=slots.filter(s=>!s.occupied).length;
+  const statusbar=document.getElementById('statusbar');
+  if(empties>0){
+    statusbar.textContent = t('streetOpen').replace('{n}',empties);
+    statusbar.classList.remove('full');
+  } else {
+    statusbar.textContent = t('streetFull');
+    statusbar.classList.add('full');
+  }
+}
+
+function updateHeatmap(){
+  const el=document.getElementById('heatmap');
+  el.innerHTML='';
+  slots.forEach(s=>{
+    const d=document.createElement('div');
+    d.style.background = s.occupied ? 'linear-gradient(90deg,#ff4d4d,#7f1d1d)' : 'linear-gradient(90deg,#00ff9d,#065f46)';
+    el.appendChild(d);
+  });
+}
+
+// ---------- Çizim ----------
+function drawRadar(){
+  const W=radar.width,H=radar.height;
+  rctx.fillStyle='#020617'; rctx.fillRect(0,0,W,H);
+
+  // ana cadde (alt)
+  const avenueY=H*0.82;
+  rctx.fillStyle='#0b1220'; rctx.fillRect(0,avenueY-20,W,40);
+  rctx.strokeStyle='#1f2937'; rctx.strokeRect(0,avenueY-20,W,40);
+  rctx.fillStyle='#9aa4b2'; rctx.font='12px system-ui'; rctx.fillText('Main Avenue', 10, avenueY-26);
+
+  // hedef sokak (dikey)
+  const streetX=W*0.5;
+  rctx.fillStyle='#0b1220'; rctx.fillRect(streetX-30,H*0.15,60,H*0.67);
+  rctx.strokeStyle='#1f2937'; rctx.strokeRect(streetX-30,H*0.15,60,H*0.67);
+  rctx.fillStyle='#9aa4b2'; rctx.fillText('Target Street', streetX-45, H*0.12);
+
+  // TX kule (sol üst)
+  const tx=W*0.12, ty=H*0.12;
+  rctx.fillStyle='#00e5ff'; rctx.fillRect(tx-6,ty,12,H*0.25);
+  rctx.beginPath(); rctx.arc(tx,ty,8,0,Math.PI*2); rctx.fill();
+  rctx.fillStyle='#9aa4b2'; rctx.fillText('FM TX', tx-20, ty-10);
+
+  // RX (sokak girişinde)
+  const rx=streetX, ry=avenueY-40;
+  rctx.fillStyle='#39ff14'; rctx.fillRect(rx-4,ry-30,8,30);
+  rctx.beginPath(); rctx.arc(rx,ry-34,6,0,Math.PI*2); rctx.fill();
+
+  // dalga halkaları
+  const now=performance.now();
+  if(now-lastWave>500){ waves.push({r:0,alpha:1}); lastWave=now; }
+  for(const wv of waves){ wv.r+=1.5; wv.alpha-=0.004; rctx.strokeStyle=`rgba(0,229,255,${Math.max(0,wv.alpha)})`; rctx.beginPath(); rctx.arc(tx,ty,wv.r,0,Math.PI*2); rctx.stroke(); }
+  waves=waves.filter(w=>w.alpha>0);
+
+  // slotlar
+  const blink=Math.sin(now*0.008)>0;
+  for(const s of slots){
+    rctx.strokeStyle='#334155'; rctx.strokeRect(s.x-20,s.y-16,40,32);
+    if(!s.occupied){
+      rctx.strokeStyle='rgba(0,255,157,0.7)'; rctx.lineWidth=2; rctx.strokeRect(s.x-20,s.y-16,40,32);
+      rctx.beginPath(); rctx.moveTo(s.x-20,s.y); rctx.lineTo(s.x+20,s.y); rctx.moveTo(s.x,s.y-16); rctx.lineTo(s.x,s.y+16); rctx.stroke();
+      if(blink){ rctx.fillStyle='rgba(0,255,157,0.15)'; rctx.fillRect(s.x-20,s.y-16,40,32); rctx.fillStyle='#00ff9d'; rctx.font='bold 9px system-ui'; rctx.fillText('EMPTY', s.x-16, s.y-20); }
+    } else {
+      rctx.fillStyle='#ff4d4d'; rctx.fillRect(s.x-18,s.y-14,36,28);
+      rctx.fillStyle='#fff'; rctx.font='10px system-ui'; rctx.fillText('CAR',s.x-12,s.y+4);
+      rctx.fillStyle='rgba(255,77,77,0.2)'; rctx.beginPath(); rctx.moveTo(s.x,s.y); rctx.lineTo(tx,ty); rctx.closePath(); rctx.fill();
+    }
+  }
+
+  // approaching car
+  updateCar();
+  rctx.fillStyle='#00e5ff'; rctx.fillRect(carX-18,carY-10,36,20);
+  rctx.fillStyle='#fff'; rctx.font='10px system-ui'; rctx.fillText('YOU',carX-10,carY+4);
+
+  // pre-scan beam from car into street
+  rctx.fillStyle='rgba(0,229,255,0.15)';
+  rctx.beginPath(); rctx.moveTo(carX,carY-10); rctx.lineTo(streetX-30,H*0.15); rctx.lineTo(streetX+30,H*0.15); rctx.closePath(); rctx.fill();
+
+  // green guidance path to nearest empty slot
+  const nearest = slots.find(s=>!s.occupied);
+  if(nearest){
+    rctx.strokeStyle='rgba(0,255,157,0.8)'; rctx.setLineDash([6,6]);
+    rctx.beginPath(); rctx.moveTo(carX,carY); rctx.lineTo(streetX,avenueY-40); rctx.lineTo(nearest.x,nearest.y); rctx.stroke();
+    rctx.setLineDash([]);
+  }
+
+  // direct TX-RX path
+  rctx.strokeStyle='rgba(0,229,255,0.2)'; rctx.setLineDash([4,4]);
+  rctx.beginPath(); rctx.moveTo(tx,ty); rctx.lineTo(rx,ry); rctx.stroke();
+  rctx.setLineDash([]);
+}
+
+function drawSpectrum(){
+  const W=spec.width,H=spec.height;
+  sctx.fillStyle='#000'; sctx.fillRect(0,0,W,H);
+  if(mode==='live' && analyser){
+    analyser.getByteFrequencyData(dataArray);
+    const barW=W/dataArray.length*4;
+    for(let i=0;i<dataArray.length/4;i++){ const h=(dataArray[i]/255)*H; sctx.fillStyle=`hsl(${i*2},100%,50%)`; sctx.fillRect(i*barW,H-h,barW-1,h); }
+  } else {
+    const center=(freq-87.5)/(108-87.5)*W;
+    for(let x=0;x<W;x++){ const d=Math.abs(x-center); const h=H*Math.exp(-d*d/400); sctx.fillStyle='#00ff9d'; sctx.fillRect(x,H-h,1,h); }
+    sctx.strokeStyle='#ff4d4d'; sctx.setLineDash([4,4]);
+    sctx.beginPath(); sctx.moveTo(0,H*0.5); sctx.lineTo(W,H*0.5); sctx.stroke(); sctx.setLineDash([]);
+    for(let x=0;x<W;x++){ const n=Math.random()*10; sctx.fillStyle='rgba(255,255,255,0.05)'; sctx.fillRect(x,H-n,1,n); }
+  }
+}
+
+function loop(){
+  // approach animation
+  if(carProgress<1) carProgress += 0.002;
+  drawRadar(); drawSpectrum(); requestAnimationFrame(loop);
+}
+loop();
+
+setInterval(()=>{
+  if(mode!=='sim') return;
+  slots.forEach((s,i)=>{
+    if(s.occupied){ s.signal=-60-Math.random()*8; s.phase=100+Math.random()*60; s.refl=60+Math.random()*25; }
+    else { s.signal=-38-Math.random()*6; s.phase=Math.random()*15; s.refl=2+Math.random()*6; }
+  });
+  renderSlotCards(); updateSummary(); updateHeatmap();
+},1500);
+
+applyLang(); renderSlotCards(); updateSummary(); updateHeatmap();
+</script>
+</body>
+</html>
