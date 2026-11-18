@@ -12,3 +12,12 @@ workflows:
         script: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR=$CM_BUILD_DIR/build
     artifacts:
       - build/*.app
+ 
+  android-build: 
+    name: Android APK Build 
+    instance_type: linux_x2 
+    scripts: 
+      - name: Build Android APK 
+        script: cd android && chmod +x gradlew && ./gradlew assembleDebug 
+    artifacts: 
+      - android/app/build/outputs/apk/debug/*.apk
