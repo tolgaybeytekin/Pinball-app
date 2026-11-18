@@ -9,6 +9,6 @@ workflows:
       - name: Add Microphone Permission
         script: /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string FM pasif radar ve ses spektrumu analizi icin mikrofon erisimi gereklidir." ios/App/App/Info.plist
       - name: Build Unsigned iOS App
-        script: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR=$CM_BUILD_DIR/build
+        script: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR=$CM_BUILD_DIR/build
     artifacts:
       - build/*.app
